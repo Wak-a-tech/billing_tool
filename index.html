@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Générateur de factures — WAK</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="sheet">
+    <header class="page-head">
+      <h1>Générateur de factures</h1>
+      <button type="button" class="btn btn-ghost btn-sm" id="toggleSettings">Paramètres</button>
+    </header>
+
+    <section class="card settings-card hidden" id="settingsPanel">
+      <div class="row-inline">
+        <div class="field">
+          <label for="numPrefix">Préfixe de numérotation</label>
+          <input type="text" id="numPrefix" maxlength="12" placeholder="WAK" />
+        </div>
+        <div class="field grow">
+          <label for="nextSeq">Prochain numéro de séquence (xxxx)</label>
+          <input type="number" id="nextSeq" min="1" step="1" />
+        </div>
+      </div>
+      <p class="hint">Le numéro complet s'affiche sous la forme <code>Facture n°<span id="prefixHint">WAK</span>-AAAA-xxxx</code> et s'incrémente à chaque génération.</p>
+      <button type="button" class="btn btn-sm" id="saveSettings">Enregistrer</button>
+    </section>
+
+    <form id="invoiceForm" class="card invoice-card" autocomplete="off">
+      <!-- 1 + 2 : numéro (haut gauche) + logo (haut droite) -->
+      <div class="row row-top">
+        <div class="col">
+          <div class="invoice-number" id="invoiceNumber">Facture n°WAK-…</div>
+        </div>
+        <div class="col col-logo">
+          <div class="logo-drop" id="logoDrop">
+            <img id="logoPreview" alt="Logo" class="hidden" />
+            <span class="logo-placeholder" id="logoPlaceholder">Choisir un logo…</span>
+          </div>
+          <input type="file" id="logoInput" accept="image/*" hidden />
+          <button type="button" class="btn btn-ghost btn-sm" id="logoClear">Retirer le logo</button>
+        </div>
+      </div>
+
+      <!-- 3 : dates -->
+      <div class="row">
+        <div class="col">
+          <div class="field">
+            <label for="dateEmission">Date d'émission</label>
+            <input type="text" id="dateEmission" inputmode="numeric" placeholder="jj/mm/aaaa" maxlength="10" />
+          </div>
+        </div>
+        <div class="col">
+          <div class="field">
+            <label for="dateEcheance">Date d'échéance</label>
+            <input type="text" id="dateEcheance" inputmode="numeric" placeholder="jj/mm/aaaa" maxlength="10" />
+          </div>
+        </div>
+      </div>
+
+      <!-- 4 + 5 : entreprise émettrice (gauche) / entreprise facturée (droite) -->
+      <div class="row">
+        <!-- 4 : émetteur -->
+        <div class="col">
+          <fieldset class="party">
+            <legend>Entreprise qui facture</legend>
+            <div class="party-select">
+              <select id="issuerSelect"><option value="">— Nouvelle entreprise —</option></select>
+              <button type="button" class="btn btn-sm" id="issuerSave">Enregistrer</button>
+              <button type="button" class="btn btn-sm btn-ghost" id="issuerDelete">Supprimer</button>
+            </div>
+            <div class="field"><label for="i_raisonSociale">Raison sociale</label>
+              <input type="text" id="i_raisonSociale" /></div>
+            <div class="field"><label for="i_rue">Adresse — rue</label>
+              <input type="text" id="i_rue" /></div>
+            <div class="row-inline">
+              <div class="field"><label for="i_cp">Code postal</label>
+                <input type="text" id="i_cp" /></div>
+              <div class="field grow"><label for="i_ville">Ville</label>
+                <input type="text" id="i_ville" /></div>
+            </div>
+            <div class="field"><label for="i_pays">Pays</label>
+              <input type="text" id="i_pays" value="France" /></div>
+            <div class="row-inline">
+              <div class="field"><label for="i_formeJuridique">Forme juridique</label>
+                <input type="text" id="i_formeJuridique" placeholder="SAS, SARL…" /></div>
+              <div class="field grow"><label for="i_capital">Capital social</label>
+                <input type="text" id="i_capital" inputmode="decimal" placeholder="3000" /></div>
+            </div>
+            <div class="row-inline">
+              <div class="field grow"><label for="i_siren">SIREN</label>
+                <input type="text" id="i_siren" /></div>
+              <div class="field grow"><label for="i_siret">SIRET</label>
+                <input type="text" id="i_siret" /></div>
+            </div>
+            <div class="field"><label for="i_rcs">RCS</label>
+              <input type="text" id="i_rcs" placeholder="Ville 000 000 000" /></div>
+          </fieldset>
+        </div>
+
+        <!-- 5 : client -->
+        <div class="col">
+          <fieldset class="party">
+            <legend>Entreprise à facturer</legend>
+            <div class="party-select">
+              <select id="clientSelect"><option value="">— Nouvelle entreprise —</option></select>
+              <button type="button" class="btn btn-sm" id="clientSave">Enregistrer</button>
+              <button type="button" class="btn btn-sm btn-ghost" id="clientDelete">Supprimer</button>
+            </div>
+            <div class="field"><label for="c_raisonSociale">Raison sociale</label>
+              <input type="text" id="c_raisonSociale" /></div>
+            <div class="field"><label for="c_nomPrenom">Nom et prénom</label>
+              <input type="text" id="c_nomPrenom" /></div>
+            <div class="field"><label for="c_adresse">Adresse</label>
+              <textarea id="c_adresse" rows="2"></textarea></div>
+            <div class="field"><label for="c_telephone">Numéro de téléphone</label>
+              <input type="text" id="c_telephone" inputmode="tel" /></div>
+            <div class="field"><label for="c_email">Adresse mail</label>
+              <input type="email" id="c_email" /></div>
+          </fieldset>
+        </div>
+      </div>
+
+      <!-- 6 + 7 : TVA non applicable + devise -->
+      <div class="row">
+        <div class="col">
+          <label class="checkbox"><input type="checkbox" id="tvaNonApplicable" /> TVA non applicable</label>
+        </div>
+        <div class="col">
+          <div class="field">
+            <label for="devise">Devise</label>
+            <select id="devise">
+              <option value="EUR" selected>Euro (€)</option>
+              <option value="USD">Dollar US ($)</option>
+              <option value="GBP">Livre sterling (£)</option>
+              <option value="CHF">Franc suisse (CHF)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- 8 : lignes -->
+      <div class="lines">
+        <div class="lines-head" id="linesHead">
+          <span>Description</span>
+          <span>Quantité</span>
+          <span>Prix unitaire</span>
+          <span class="tva-col">Taux TVA</span>
+          <span>Montant</span>
+          <span></span>
+        </div>
+        <div id="linesBody"></div>
+        <button type="button" class="btn btn-add" id="addLine" aria-label="Ajouter une ligne">＋ Ajouter une ligne</button>
+      </div>
+
+      <!-- totaux (aperçu live) -->
+      <div class="totals" id="totalsPreview"></div>
+
+      <!-- 9 : boutons -->
+      <div class="actions">
+        <button type="button" class="btn btn-glass" id="btnPreview">Prévisualiser</button>
+        <button type="button" class="btn btn-glass btn-primary" id="btnGenerate">Générer</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="modal hidden" id="previewModal">
+    <div class="modal-inner">
+      <div class="modal-bar">
+        <span>Prévisualisation</span>
+        <button type="button" class="btn btn-sm" id="previewClose">Fermer</button>
+      </div>
+      <iframe id="previewFrame" title="Prévisualisation de la facture"></iframe>
+    </div>
+  </div>
+
+  <script src="vendor/pdfmake.min.js"></script>
+  <script src="vendor/vfs_fonts.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

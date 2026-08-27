@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Éditeurs / outils
+.vscode/
+.idea/
+.claude/
+*.swp
+
+# Node (si un jour des outils de dev sont ajoutés)
+node_modules/
+
+# Fichiers générés en test
+*.pdf
+!docs/**/*.pdf
