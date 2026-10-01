@@ -10,6 +10,6 @@ migrations_dir = "migrations"
 
 [vars]
 ALLOWED_EMAILS = "damien.dussour@wak-a.com,rafael.debucquet@wak-a.com"
-# À renseigner après la création de l'application Cloudflare Access :
-# ACCESS_TEAM_DOMAIN = "https://<équipe>.cloudflareaccess.com"
-# ACCESS_AUD = "<Application Audience (AUD) Tag>"
+# Application Cloudflare Access « Factures WAK » (valeurs publiques, non secrètes).
+ACCESS_TEAM_DOMAIN = "https://falling-flower-2972.cloudflareaccess.com"
+ACCESS_AUD = "dfa985db7a88ddc86dfe3be0db60ba6c1412372903019fcdf25b3025ffc01c21"
