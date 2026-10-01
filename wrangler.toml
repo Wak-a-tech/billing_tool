@@ -1,0 +1,15 @@
+name = "wak-factures"
+pages_build_output_dir = "public"
+compatibility_date = "2026-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "wak-factures"
+database_id = "8e7c75d7-d0e3-439f-a6fc-85171f9e04ac"
+migrations_dir = "migrations"
+
+[vars]
+ALLOWED_EMAILS = "damien.dussour@wak-a.com,rafael.debucquet@wak-a.com"
+# À renseigner après la création de l'application Cloudflare Access :
+# ACCESS_TEAM_DOMAIN = "https://<équipe>.cloudflareaccess.com"
+# ACCESS_AUD = "<Application Audience (AUD) Tag>"

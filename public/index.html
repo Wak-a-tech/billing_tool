@@ -6,12 +6,31 @@
   <title>Générateur de factures — WAK</title>
   <link rel="stylesheet" href="css/style.css" />
 </head>
-<body>
+<body class="loading">
   <div class="sheet">
     <header class="page-head">
       <h1>Générateur de factures</h1>
-      <button type="button" class="btn btn-ghost btn-sm" id="toggleSettings">Paramètres</button>
+      <div class="head-actions">
+        <span class="current-user" id="currentUser"></span>
+        <button type="button" class="btn btn-ghost btn-sm" id="toggleHistory">Historique</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="toggleSettings">Paramètres</button>
+      </div>
     </header>
+
+    <p class="boot-error hidden" id="bootError"></p>
+
+    <section class="card history-card hidden" id="historyPanel">
+      <h2>Factures émises</h2>
+      <div class="history-scroll">
+        <table class="history">
+          <thead>
+            <tr><th>Numéro</th><th>Émise le</th><th>Client</th><th class="num">Total</th><th>Par</th><th></th></tr>
+          </thead>
+          <tbody id="historyBody"></tbody>
+        </table>
+      </div>
+      <p class="hint hidden" id="historyEmpty">Aucune facture émise pour l'instant.</p>
+    </section>
 
     <section class="card settings-card hidden" id="settingsPanel">
       <div class="row-inline">
@@ -24,8 +43,12 @@
           <input type="number" id="nextSeq" min="1" step="1" />
         </div>
       </div>
-      <p class="hint">Le numéro complet s'affiche sous la forme <code>Facture n°<span id="prefixHint">WAK</span>-AAAA-xxxx</code> et s'incrémente à chaque génération.</p>
-      <button type="button" class="btn btn-sm" id="saveSettings">Enregistrer</button>
+      <p class="hint">Le numéro complet s'affiche sous la forme <code>Facture n°<span id="prefixHint">WAK</span>-AAAA-xxxx</code> et s'incrémente à chaque génération. Ces réglages sont partagés : ils s'appliquent à tout le monde.</p>
+      <div class="settings-actions">
+        <button type="button" class="btn btn-sm" id="saveSettings">Enregistrer</button>
+        <button type="button" class="btn btn-sm btn-ghost" id="importBtn">Importer des données locales (.json)…</button>
+        <input type="file" id="importInput" accept="application/json,.json" hidden />
+      </div>
     </section>
 
     <form id="invoiceForm" class="card invoice-card" autocomplete="off">

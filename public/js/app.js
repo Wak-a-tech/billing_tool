@@ -3,30 +3,58 @@
   "use strict";
 
   // ---------------------------------------------------------------------------
-  // Stockage local
+  // Stockage
   // ---------------------------------------------------------------------------
-  var K = {
-    seq: "bt.seq",
-    logo: "bt.logo",
-    issuers: "bt.issuers",
-    clients: "bt.clients",
-    settings: "bt.settings",
-  };
+  // Les données partagées (compteur, préfixe, logo, entreprises, historique)
+  // vivent sur le serveur (Cloudflare D1). Seules les préférences d'affichage
+  // propres à chaque personne (devise, TVA, dernières sélections) restent dans
+  // le localStorage du navigateur.
+  var PREFS_KEY = "bt.prefs";
 
-  function load(key, fallback) {
+  function loadPrefs() {
     try {
-      var raw = localStorage.getItem(key);
-      return raw == null ? fallback : JSON.parse(raw);
+      return JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {};
     } catch (e) {
-      return fallback;
+      return {};
     }
   }
-  function save(key, value) {
+  function savePrefs(p) {
     try {
-      localStorage.setItem(key, JSON.stringify(value));
+      localStorage.setItem(PREFS_KEY, JSON.stringify(p));
     } catch (e) {
-      toast("Impossible d'enregistrer localement : " + e.message, "error");
+      /* préférence non mémorisée : sans conséquence */
     }
+  }
+
+  // État partagé, chargé depuis /api/state.
+  var S = { user: "", nextSeq: 1, prefix: "WAK", logo: null, issuers: [], clients: [] };
+
+  function api(method, path, body) {
+    return fetch("/api/" + path, {
+      method: method,
+      credentials: "same-origin",
+      headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
+      .catch(function () {
+        // Session Cloudflare Access expirée (redirection bloquée) ou réseau coupé.
+        throw new Error("connexion au serveur impossible — rechargez la page");
+      })
+      .then(function (res) {
+        return res
+          .json()
+          .catch(function () {
+            return {};
+          })
+          .then(function (data) {
+            if (!res.ok) throw new Error(data.error || "erreur serveur (" + res.status + ")");
+            return data;
+          });
+      });
+  }
+
+  function errMsg(e) {
+    return e && e.message ? e.message : String(e);
   }
 
   // Notification non bloquante (remplace alert)
@@ -44,14 +72,6 @@
     toastTimer = setTimeout(function () {
       el.className = "toast";
     }, 3200);
-  }
-
-  function getSeq() {
-    var n = parseInt(load(K.seq, 1), 10);
-    return isNaN(n) || n < 1 ? 1 : n;
-  }
-  function setSeq(n) {
-    save(K.seq, n);
   }
 
   // ---------------------------------------------------------------------------
@@ -78,8 +98,8 @@
     CHF: "CHF",
   };
 
-  function deviseSymbol() {
-    return DEVISES[$("devise").value] || "€";
+  function deviseSymbol(cur) {
+    return DEVISES[cur || $("devise").value] || "€";
   }
   // Les polices embarquées dans le PDF n'ont pas de glyphe pour l'espace fine
   // insécable (U+202F) ni l'espace insécable (U+00A0) utilisées par Intl en
@@ -90,8 +110,8 @@
   function fmtNumber(n) {
     return normSpace(moneyFmt.format(Number(n) || 0));
   }
-  function fmtMoney(n) {
-    return fmtNumber(n) + " " + deviseSymbol();
+  function fmtMoney(n, cur) {
+    return fmtNumber(n) + " " + deviseSymbol(cur);
   }
 
   function pad4(n) {
@@ -113,6 +133,19 @@
       "/" +
       d.getFullYear()
     );
+  }
+  function toIsoDate(d) {
+    return (
+      d.getFullYear() +
+      "-" +
+      String(d.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(d.getDate()).padStart(2, "0")
+    );
+  }
+  function fromIsoDate(s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || "");
+    return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
   }
   function fmtDateLong(d) {
     return dateLongFmt.format(d);
@@ -145,8 +178,7 @@
   // ---------------------------------------------------------------------------
   // pdfmake n'accepte que des images PNG/JPEG en dataURL. On normalise donc
   // tout fichier choisi (PNG, JPG, WEBP, GIF, SVG…) en PNG via un canvas.
-  var logoData = load(K.logo, null); // { dataUrl:pngDataURL, w:Number, h:Number }
-  if (logoData && !logoData.dataUrl) logoData = null; // ancien format -> à re-sélectionner
+  var logoData = null; // { dataUrl:pngDataURL, w:Number, h:Number }, partagé via le serveur
 
   function renderLogo() {
     var img = $("logoPreview");
@@ -175,7 +207,7 @@
         image.onload = function () {
           var w = image.naturalWidth || image.width || 400;
           var h = image.naturalHeight || image.height || 200;
-          var maxW = 1400;
+          var maxW = 1000;
           if (w > maxW) {
             h = Math.round((h * maxW) / w);
             w = maxW;
@@ -208,19 +240,28 @@
     if (!file) return;
     fileToPng(file)
       .then(function (result) {
-        logoData = result;
-        save(K.logo, logoData);
-        renderLogo();
+        return api("PUT", "settings/logo", { value: result }).then(function () {
+          logoData = result;
+          renderLogo();
+          toast("Logo enregistré.");
+        });
       })
       .catch(function (err) {
         toast("Logo : " + (err && err.message ? err.message : "import impossible"), "error");
       });
   });
   $("logoClear").addEventListener("click", function () {
-    logoData = null;
-    localStorage.removeItem(K.logo);
-    $("logoInput").value = "";
-    renderLogo();
+    if (!logoData) return;
+    if (!confirm("Retirer le logo pour tout le monde ?")) return;
+    api("PUT", "settings/logo", { value: null })
+      .then(function () {
+        logoData = null;
+        $("logoInput").value = "";
+        renderLogo();
+      })
+      .catch(function (e) {
+        toast("Logo : " + errMsg(e), "error");
+      });
   });
 
   // ---------------------------------------------------------------------------
@@ -241,7 +282,7 @@
   var CLIENT_FIELDS = ["raisonSociale", "nomPrenom", "adresse", "telephone", "email"];
 
   function makeParty(cfg) {
-    var list = load(cfg.storeKey, []);
+    var list = [];
     var selectEl = $(cfg.selectId);
 
     function readForm() {
@@ -283,46 +324,61 @@
         toast("Renseignez au moins la raison sociale avant d'enregistrer.", "error");
         return;
       }
-      var existing = list.filter(function (x) {
-        return x.id === selectEl.value;
-      })[0];
-      if (existing) {
-        Object.assign(existing, data);
-      } else {
-        existing = Object.assign({ id: uid() }, data);
-        list.push(existing);
-      }
-      save(cfg.storeKey, list);
-      refreshOptions(existing.id);
-      persistSettings();
-      toast("Entreprise enregistrée.");
+      var id = selectEl.value || uid();
+      api("PUT", "parties/" + encodeURIComponent(id), { kind: cfg.kind, data: data })
+        .then(function () {
+          var existing = list.filter(function (x) {
+            return x.id === id;
+          })[0];
+          if (existing) Object.assign(existing, data);
+          else list.push(Object.assign({ id: id }, data));
+          refreshOptions(id);
+          persistSettings();
+          toast("Entreprise enregistrée.");
+        })
+        .catch(function (e) {
+          toast("Enregistrement impossible : " + errMsg(e), "error");
+        });
     });
 
     $(cfg.deleteId).addEventListener("click", function () {
       if (!selectEl.value) return;
-      if (!confirm("Supprimer cette entreprise enregistrée ?")) return;
-      list = list.filter(function (x) {
-        return x.id !== selectEl.value;
-      });
-      save(cfg.storeKey, list);
-      refreshOptions("");
-      writeForm(null);
-      persistSettings();
-      recompute();
+      if (!confirm("Supprimer cette entreprise enregistrée (pour tout le monde) ?")) return;
+      var id = selectEl.value;
+      api("DELETE", "parties/" + encodeURIComponent(id))
+        .then(function () {
+          list = list.filter(function (x) {
+            return x.id !== id;
+          });
+          refreshOptions("");
+          writeForm(null);
+          persistSettings();
+          recompute();
+        })
+        .catch(function (e) {
+          toast("Suppression impossible : " + errMsg(e), "error");
+        });
     });
 
     return {
       refreshOptions: refreshOptions,
       writeForm: writeForm,
+      readForm: readForm,
       selectEl: selectEl,
-      getList: function () {
-        return list;
+      // Remplace la liste par la version serveur en gardant la sélection si
+      // l'entreprise existe toujours (sans toucher au formulaire en cours).
+      setList: function (newList) {
+        list = newList.slice();
+        var still = list.some(function (x) {
+          return x.id === selectEl.value;
+        });
+        refreshOptions(still ? selectEl.value : "");
       },
     };
   }
 
   var issuer = makeParty({
-    storeKey: K.issuers,
+    kind: "issuer",
     selectId: "issuerSelect",
     saveId: "issuerSave",
     deleteId: "issuerDelete",
@@ -330,7 +386,7 @@
     fields: ISSUER_FIELDS,
   });
   var client = makeParty({
-    storeKey: K.clients,
+    kind: "client",
     selectId: "clientSelect",
     saveId: "clientSave",
     deleteId: "clientDelete",
@@ -339,12 +395,10 @@
   });
 
   // ---------------------------------------------------------------------------
-  // Réglages persistants (devise, TVA, sélections, dernières entreprises)
+  // Préférences locales (devise, TVA, dernières entreprises sélectionnées)
   // ---------------------------------------------------------------------------
   function persistSettings() {
-    var prev = load(K.settings, {});
-    save(K.settings, {
-      prefix: prev.prefix || "WAK",
+    savePrefs({
       devise: $("devise").value,
       tvaNonApplicable: $("tvaNonApplicable").checked,
       issuerId: issuer.selectEl.value,
@@ -444,8 +498,10 @@
   // Calcul des totaux
   // ---------------------------------------------------------------------------
   function computeTotals() {
-    var noTva = $("tvaNonApplicable").checked;
-    var lines = getLines();
+    return computeTotalsFrom(getLines(), $("tvaNonApplicable").checked);
+  }
+
+  function computeTotalsFrom(lines, noTva) {
     var subtotal = 0;
     var tvaByRate = {};
 
@@ -518,13 +574,15 @@
   // ---------------------------------------------------------------------------
   // Numéro de facture
   // ---------------------------------------------------------------------------
-  function getPrefix() {
-    var p = (load(K.settings, {}).prefix || "WAK").toString().trim().toUpperCase();
-    return p.replace(/[^A-Z0-9-]/g, "") || "WAK";
+  // Le numéro affiché est le prochain numéro libre au moment du chargement.
+  // Il n'est réellement attribué (par le serveur) qu'au clic sur « Générer » :
+  // si l'associé génère une facture entre-temps, on reçoit le suivant.
+  function normPrefix(p) {
+    return String(p || "").trim().toUpperCase().replace(/[^A-Z0-9-]/g, "") || "WAK";
   }
   function currentInvoiceNumber() {
     var d = parseDate($("dateEmission").value) || new Date();
-    return getPrefix() + "-" + d.getFullYear() + "-" + pad4(getSeq());
+    return S.prefix + "-" + d.getFullYear() + "-" + pad4(S.nextSeq);
   }
   function renderInvoiceNumber() {
     $("invoiceNumber").textContent = "Facture n°" + currentInvoiceNumber();
@@ -533,9 +591,9 @@
   // ---------------------------------------------------------------------------
   // Construction du PDF (pdfmake)
   // ---------------------------------------------------------------------------
-  function partyStackIssuer() {
+  function partyStackIssuer(p) {
     var g = function (f) {
-      return $("i_" + f).value.trim();
+      return String(p[f] || "").trim();
     };
     var lines = [];
     if (g("raisonSociale")) lines.push({ text: g("raisonSociale"), bold: true });
@@ -572,9 +630,9 @@
     return stack;
   }
 
-  function partyStackClient() {
+  function partyStackClient(p) {
     var g = function (f) {
-      return $("c_" + f).value.trim();
+      return String(p[f] || "").trim();
     };
     var stack = [{ text: "Facturer à", bold: true, margin: [0, 0, 0, 2] }];
     if (g("raisonSociale")) stack.push({ text: g("raisonSociale") });
@@ -595,10 +653,37 @@
     return { image: logoData.dataUrl, fit: [170, 80], alignment: "right" };
   }
 
-  function buildDocDefinition(number) {
-    var t = computeTotals();
+  // Tout ce qui figure sur une facture. C'est aussi ce qui est archivé dans
+  // l'historique pour pouvoir re-télécharger le PDF plus tard.
+  function collectSnapshot() {
     var emission = parseDate($("dateEmission").value) || new Date();
     var echeance = parseDate($("dateEcheance").value) || addMonths(emission, 1);
+    return {
+      issueDate: toIsoDate(emission),
+      dueDate: toIsoDate(echeance),
+      currency: $("devise").value,
+      noTva: $("tvaNonApplicable").checked,
+      issuer: issuer.readForm(),
+      client: client.readForm(),
+      lines: getLines().map(function (l) {
+        return { description: l.description, qty: l.qty, pu: l.pu, tva: l.tva };
+      }),
+    };
+  }
+
+  function buildDocDefinition(snap, number) {
+    var t = computeTotalsFrom(
+      snap.lines.map(function (l) {
+        return Object.assign({}, l);
+      }),
+      snap.noTva
+    );
+    var cur = snap.currency;
+    var money = function (n) {
+      return fmtMoney(n, cur);
+    };
+    var emission = fromIsoDate(snap.issueDate);
+    var echeance = fromIsoDate(snap.dueDate);
     var tvaApplicable = !t.noTva;
 
     // Tableau des lignes
@@ -621,11 +706,11 @@
       var r = [
         { text: l.description || "" },
         { text: qtyStr, alignment: "right" },
-        { text: fmtMoney(l.pu), alignment: "right" },
+        { text: money(l.pu), alignment: "right" },
       ];
       if (tvaApplicable)
         r.push({ text: String(l.tva).replace(".", ",") + " %", alignment: "right" });
-      r.push({ text: fmtMoney(l._amount), alignment: "right" });
+      r.push({ text: money(l._amount), alignment: "right" });
       body.push(r);
     });
 
@@ -634,18 +719,18 @@
     // Totaux
     var totalsBody = [];
     if (t.noTva) {
-      totalsBody.push(["Sous-total", fmtMoney(t.subtotal)]);
-      totalsBody.push(["Total", fmtMoney(t.total)]);
+      totalsBody.push(["Sous-total", money(t.subtotal)]);
+      totalsBody.push(["Total", money(t.total)]);
     } else {
-      totalsBody.push(["Sous-total HT", fmtMoney(t.subtotal)]);
+      totalsBody.push(["Sous-total HT", money(t.subtotal)]);
       Object.keys(t.tvaByRate)
         .sort(function (a, b) {
           return b - a;
         })
         .forEach(function (rate) {
-          totalsBody.push(["TVA " + String(rate).replace(".", ",") + " %", fmtMoney(t.tvaByRate[rate])]);
+          totalsBody.push(["TVA " + String(rate).replace(".", ",") + " %", money(t.tvaByRate[rate])]);
         });
-      totalsBody.push(["Total TTC", fmtMoney(t.total)]);
+      totalsBody.push(["Total TTC", money(t.total)]);
     }
 
     var content = [
@@ -669,13 +754,13 @@
       },
       {
         columns: [
-          { width: "*", stack: partyStackIssuer() },
-          { width: "*", stack: partyStackClient() },
+          { width: "*", stack: partyStackIssuer(snap.issuer) },
+          { width: "*", stack: partyStackClient(snap.client) },
         ],
         columnGap: 24,
       },
       {
-        text: fmtMoney(t.total) + " dus le " + fmtDateLong(echeance),
+        text: money(t.total) + " dus le " + fmtDateLong(echeance),
         fontSize: 15,
         bold: true,
         margin: [0, 26, 0, 12],
@@ -729,7 +814,7 @@
           { width: "*", text: "" },
           {
             width: "auto",
-            table: { body: [[{ text: "Montant dû", bold: true }, { text: fmtMoney(t.total), bold: true }]] },
+            table: { body: [[{ text: "Montant dû", bold: true }, { text: money(t.total), bold: true }]] },
             layout: {
               hLineWidth: function (i) {
                 return i === 0 ? 1 : 0;
@@ -791,7 +876,7 @@
 
   $("btnPreview").addEventListener("click", function () {
     if (!ensureReady()) return;
-    var dd = buildDocDefinition(currentInvoiceNumber());
+    var dd = buildDocDefinition(collectSnapshot(), currentInvoiceNumber());
     Promise.resolve(pdfMake.createPdf(dd).getBlob())
       .then(function (blob) {
         revokePreview();
@@ -843,21 +928,113 @@
     fb.style.display = "block";
   }
 
+  function pdfBlob(snap, number) {
+    return Promise.resolve(pdfMake.createPdf(buildDocDefinition(snap, number)).getBlob());
+  }
+
+  // Le numéro est attribué et la facture archivée par le serveur AVANT de
+  // produire le PDF : si le PDF échoue, la facture reste récupérable depuis
+  // l'historique et aucun numéro n'est perdu.
+  var generating = false;
   $("btnGenerate").addEventListener("click", function () {
-    if (!ensureReady()) return;
-    var number = currentInvoiceNumber();
-    var dd = buildDocDefinition(number);
-    Promise.resolve(pdfMake.createPdf(dd).getBlob())
-      .then(function (blob) {
-        downloadBlob(blob, "Facture_" + number + ".pdf");
-        setSeq(getSeq() + 1);
+    if (!ensureReady() || generating) return;
+    if (!parseDate($("dateEmission").value) || !parseDate($("dateEcheance").value)) {
+      toast("Dates invalides : utilisez le format jj/mm/aaaa.", "error");
+      return;
+    }
+    var snap = collectSnapshot();
+    generating = true;
+    $("btnGenerate").disabled = true;
+    api("POST", "invoices", { snapshot: snap })
+      .then(function (res) {
+        S.nextSeq = res.nextSeq;
         renderInvoiceNumber();
-        $("nextSeq").value = getSeq();
-        toast("Facture " + number + " générée.");
+        $("nextSeq").value = S.nextSeq;
+        if (!$("historyPanel").classList.contains("hidden")) loadHistory();
+        return pdfBlob(snap, res.number).then(
+          function (blob) {
+            downloadBlob(blob, "Facture_" + res.number + ".pdf");
+            toast("Facture " + res.number + " générée.");
+          },
+          function (e) {
+            toast(
+              "Facture " + res.number + " enregistrée mais PDF en erreur (" + errMsg(e) + ") : re-téléchargez-la depuis l'historique.",
+              "error"
+            );
+          }
+        );
       })
       .catch(function (e) {
-        toast("Erreur lors de la génération : " + (e && e.message), "error");
+        toast("Génération impossible : " + errMsg(e), "error");
+      })
+      .then(function () {
+        generating = false;
+        $("btnGenerate").disabled = false;
       });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Historique des factures
+  // ---------------------------------------------------------------------------
+  var shortDateFmt = new Intl.DateTimeFormat("fr-FR");
+
+  function loadHistory() {
+    var body = $("historyBody");
+    api("GET", "invoices")
+      .then(function (res) {
+        body.innerHTML = "";
+        $("historyEmpty").classList.toggle("hidden", res.invoices.length > 0);
+        res.invoices.forEach(function (inv) {
+          var tr = document.createElement("tr");
+          var cells = [
+            inv.number,
+            shortDateFmt.format(fromIsoDate(inv.issue_date)),
+            inv.client_name || "—",
+            fmtMoney(inv.total, inv.currency),
+            (inv.created_by || "").split("@")[0],
+          ];
+          cells.forEach(function (txt, i) {
+            var td = document.createElement("td");
+            td.textContent = txt;
+            if (i === 3) td.className = "num";
+            tr.appendChild(td);
+          });
+          var td = document.createElement("td");
+          var b = document.createElement("button");
+          b.type = "button";
+          b.className = "btn btn-sm";
+          b.textContent = "PDF";
+          b.title = "Re-télécharger " + inv.number;
+          b.addEventListener("click", function () {
+            redownload(inv.seq);
+          });
+          td.appendChild(b);
+          tr.appendChild(td);
+          body.appendChild(tr);
+        });
+      })
+      .catch(function (e) {
+        toast("Historique indisponible : " + errMsg(e), "error");
+      });
+  }
+
+  function redownload(seq) {
+    if (!ensureReady()) return;
+    api("GET", "invoices/" + seq)
+      .then(function (inv) {
+        return pdfBlob(inv.snapshot, inv.number).then(function (blob) {
+          downloadBlob(blob, "Facture_" + inv.number + ".pdf");
+        });
+      })
+      .catch(function (e) {
+        toast("Téléchargement impossible : " + errMsg(e), "error");
+      });
+  }
+
+  $("toggleHistory").addEventListener("click", function () {
+    var panel = $("historyPanel");
+    panel.classList.toggle("hidden");
+    if (!panel.classList.contains("hidden")) loadHistory();
   });
 
   // ---------------------------------------------------------------------------
@@ -872,20 +1049,64 @@
       toast("Numéro de séquence invalide.", "error");
       return;
     }
-    var prefix = ($("numPrefix").value || "WAK").trim().toUpperCase().replace(/[^A-Z0-9-]/g, "");
-    if (!prefix) prefix = "WAK";
-    var st = load(K.settings, {});
-    st.prefix = prefix;
-    save(K.settings, st);
-    $("numPrefix").value = prefix;
-    $("prefixHint").textContent = prefix;
-    setSeq(n);
-    renderInvoiceNumber();
-    $("settingsPanel").classList.add("hidden");
+    var prefix = normPrefix($("numPrefix").value);
+    var jobs = [];
+    if (prefix !== S.prefix) {
+      jobs.push(
+        api("PUT", "settings/prefix", { value: prefix }).then(function (r) {
+          S.prefix = r.prefix;
+        })
+      );
+    }
+    if (n !== S.nextSeq) {
+      jobs.push(
+        api("PUT", "counter", { nextSeq: n }).then(function (r) {
+          S.nextSeq = r.nextSeq;
+        })
+      );
+    }
+    Promise.all(jobs)
+      .then(function () {
+        $("numPrefix").value = S.prefix;
+        $("prefixHint").textContent = S.prefix;
+        renderInvoiceNumber();
+        $("settingsPanel").classList.add("hidden");
+        if (jobs.length) toast("Paramètres enregistrés pour tout le monde.");
+      })
+      .catch(function (e) {
+        $("nextSeq").value = S.nextSeq;
+        toast(errMsg(e), "error");
+      });
   });
   $("numPrefix").addEventListener("input", function () {
-    var p = $("numPrefix").value.trim().toUpperCase().replace(/[^A-Z0-9-]/g, "") || "WAK";
-    $("prefixHint").textContent = p;
+    $("prefixHint").textContent = normPrefix($("numPrefix").value);
+  });
+
+  // Import des données de l'ancienne version locale (fichier JSON exporté).
+  $("importBtn").addEventListener("click", function () {
+    $("importInput").click();
+  });
+  $("importInput").addEventListener("change", function (e) {
+    var file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    file
+      .text()
+      .then(function (txt) {
+        var data = JSON.parse(txt);
+        return api("POST", "import", {
+          issuers: data.issuers || [],
+          clients: data.clients || [],
+          logo: data.logo && data.logo.dataUrl && !logoData ? data.logo : null,
+        });
+      })
+      .then(function (r) {
+        toast(r.imported + " entreprise(s) importée(s).");
+        return refreshState();
+      })
+      .catch(function (err) {
+        toast("Import impossible : " + errMsg(err), "error");
+      });
   });
 
   // ---------------------------------------------------------------------------
@@ -917,7 +1138,33 @@
   // ---------------------------------------------------------------------------
   // Init
   // ---------------------------------------------------------------------------
-  function init() {
+  function applyState(st) {
+    S = st;
+    logoData = st.logo && st.logo.dataUrl ? st.logo : null;
+    issuer.setList(st.issuers);
+    client.setList(st.clients);
+    if (document.activeElement !== $("nextSeq")) $("nextSeq").value = S.nextSeq;
+    if (document.activeElement !== $("numPrefix")) {
+      $("numPrefix").value = S.prefix;
+      $("prefixHint").textContent = S.prefix;
+    }
+    $("currentUser").textContent = S.user;
+    renderLogo();
+    renderInvoiceNumber();
+  }
+
+  // Resynchronise au retour sur l'onglet : l'associé a pu générer une facture
+  // ou modifier une entreprise entre-temps.
+  function refreshState() {
+    return api("GET", "state").then(applyState);
+  }
+  window.addEventListener("focus", function () {
+    refreshState().catch(function () {
+      /* silencieux : une erreur s'affichera à la prochaine action */
+    });
+  });
+
+  function init(st) {
     attachDateMask($("dateEmission"));
     attachDateMask($("dateEcheance"));
 
@@ -925,25 +1172,26 @@
     $("dateEmission").value = fmtDateInput(today);
     $("dateEcheance").value = fmtDateInput(addMonths(today, 1));
 
-    var s = load(K.settings, {});
-    if (s.devise) $("devise").value = s.devise;
-    $("tvaNonApplicable").checked = !!s.tvaNonApplicable;
-    $("numPrefix").value = getPrefix();
-    $("prefixHint").textContent = getPrefix();
+    var p = loadPrefs();
+    if (p.devise) $("devise").value = p.devise;
+    $("tvaNonApplicable").checked = !!p.tvaNonApplicable;
 
-    issuer.refreshOptions(s.issuerId || "");
-    client.refreshOptions(s.clientId || "");
-    if (s.issuerId) issuer.selectEl.dispatchEvent(new Event("change"));
-    if (s.clientId) client.selectEl.dispatchEvent(new Event("change"));
+    applyState(st);
+    issuer.refreshOptions(p.issuerId || "");
+    client.refreshOptions(p.clientId || "");
+    if (issuer.selectEl.value) issuer.selectEl.dispatchEvent(new Event("change"));
+    if (client.selectEl.value) client.selectEl.dispatchEvent(new Event("change"));
 
-    $("nextSeq").value = getSeq();
-    renderLogo();
-    renderInvoiceNumber();
     applyTvaVisibility();
-
     addLine();
     recompute();
+    document.body.classList.remove("loading");
   }
 
-  init();
+  api("GET", "state")
+    .then(init)
+    .catch(function (e) {
+      $("bootError").textContent = "Impossible de charger les données partagées : " + errMsg(e);
+      $("bootError").classList.remove("hidden");
+    });
 })();

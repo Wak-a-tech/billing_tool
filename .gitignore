@@ -13,3 +13,7 @@ node_modules/
 # Fichiers générés en test
 *.pdf
 !docs/**/*.pdf
+
+# Cloudflare / wrangler
+.wrangler/
+.dev.vars

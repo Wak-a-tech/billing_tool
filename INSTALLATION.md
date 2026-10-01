@@ -1,138 +1,118 @@
-# Installation
+# Installation, déploiement et administration
 
-Ce guide explique comment faire fonctionner l'outil sur **macOS** et **Windows**,
-étape par étape. Aucune connaissance technique n'est requise.
+L'outil tourne sur **Cloudflare Pages** (site + API) avec une base **D1**, et
+l'accès est filtré par **Cloudflare Access**. Tout tient dans l'offre gratuite.
 
-L'outil est composé de simples fichiers (HTML / CSS / JS). Il n'y a **rien à
-compiler ni à installer** en tant que logiciel : il suffit de servir le dossier
-avec un petit serveur web local, puis de l'ouvrir dans un navigateur.
+- Site : https://wak-factures.pages.dev
+- Projet Pages : `wak-factures`
+- Base D1 : `wak-factures`
 
 ---
 
-## 1. Récupérer le projet
+## 1. Utilisation au quotidien
 
-### Option A — Télécharger le ZIP (le plus simple)
+1. Ouvrir **https://wak-factures.pages.dev**.
+2. Saisir son email autorisé, puis le code reçu par email (Cloudflare Access).
+3. Remplir la facture, puis cliquer sur **Générer**. Le numéro définitif est
+   attribué à ce moment‑là. Si l'associé vient de générer une facture, on
+   obtient automatiquement le numéro suivant.
+4. **Historique** liste toutes les factures émises. Le bouton **PDF** re‑télécharge
+   une facture à l'identique (avec le logo actuel).
 
-1. Sur la page GitHub du projet, cliquer sur le bouton vert **`< > Code`**.
-2. Choisir **Download ZIP**.
-3. Décompresser l'archive :
-   - **macOS** : double‑cliquer sur le fichier `.zip` dans le dossier
-     *Téléchargements*.
-   - **Windows** : clic droit sur le `.zip` → **Extraire tout…**.
-4. Vous obtenez un dossier `billing_tool` (ou `billing_tool-main`).
+Le numéro affiché en haut du formulaire est le prochain numéro libre. Il se met
+à jour quand on revient sur l'onglet.
 
-### Option B — Avec Git
+---
+
+## 2. Reprendre les données de l'ancienne version locale
+
+L'ancienne version stockait les entreprises et le logo dans le navigateur, sur
+`http://localhost:4173`. Pour les transférer :
+
+1. Relancer l'ancienne version (`python3 -m http.server 4173` dans l'ancien
+   dossier), l'ouvrir dans le **même navigateur** que d'habitude.
+2. Ouvrir la console (F12 → *Console*), coller puis valider :
+
+   ```js
+   (() => {
+     const g = (k, d) => JSON.parse(localStorage.getItem(k) || JSON.stringify(d));
+     const data = { issuers: g('bt.issuers', []), clients: g('bt.clients', []), logo: g('bt.logo', null), seq: g('bt.seq', 1) };
+     const a = document.createElement('a');
+     a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
+     a.download = 'factures-export.json';
+     a.click();
+     console.log('Prochain numéro local :', data.seq);
+   })();
+   ```
+
+3. Sur le site en ligne : **Paramètres → Importer des données locales (.json)…**
+   et choisir `factures-export.json`. Chaque associé peut importer son fichier :
+   les entreprises sont fusionnées, rien n'est écrasé chez l'autre.
+4. **Compteur** : dans **Paramètres**, saisir comme *prochain numéro* le plus
+   grand des deux numéros locaux affichés dans la console. Le compteur ne
+   peut jamais redescendre sous une facture déjà émise.
+
+---
+
+## 3. Gérer les personnes autorisées
+
+Deux endroits, à garder identiques :
+
+1. **Cloudflare Access** (https://one.dash.cloudflare.com → Access →
+   Applications → *Factures WAK* → Policies) : qui peut se connecter.
+2. **`ALLOWED_EMAILS`** dans `wrangler.toml` : qui l'API accepte. C'est une
+   seconde barrière, au cas où Access serait mal configuré. Redéployer après
+   modification (voir §4).
+
+---
+
+## 4. Déployer une modification
+
+Prérequis : Node.js, puis une fois `npm install` et `npx wrangler login`.
 
 ```bash
-git clone https://github.com/<votre-compte>/billing_tool.git
-cd billing_tool
+npm run deploy
+```
+
+Cette commande applique les éventuelles nouvelles migrations de base, puis
+publie `public/` et `functions/`.
+
+---
+
+## 5. Développer en local
+
+```bash
+npm run dev
+```
+
+Puis ouvrir http://localhost:8788. La base locale (dans `.wrangler/`) est
+séparée de la production. En local, Access est remplacé par l'email défini
+dans `.dev.vars` (`DEV_USER_EMAIL=...`, fichier non versionné).
+
+---
+
+## 6. Sauvegarde
+
+D1 conserve 30 jours d'historique restaurable (*Time Travel*). Pour un export
+complet à garder de votre côté :
+
+```bash
+npx wrangler d1 export wak-factures --remote --output sauvegarde.sql
 ```
 
 ---
 
-## 2. Lancer l'outil
+## 7. Configuration initiale (référence, déjà faite)
 
-Le navigateur doit charger la page via une adresse `http://localhost:…`
-(et non en double‑cliquant sur `index.html`, ce qui empêche certaines
-fonctions de marcher selon le navigateur).
+1. `npx wrangler d1 create wak-factures`, puis reporter l'identifiant dans
+   `wrangler.toml`.
+2. `npx wrangler pages project create wak-factures --production-branch main`
+3. Zero Trust → Access → Applications → *Self‑hosted* sur
+   `wak-factures.pages.dev` et `*.wak-factures.pages.dev`. Policy *Allow*
+   avec les emails autorisés, connexion *One‑time PIN*.
+4. Reporter `ACCESS_TEAM_DOMAIN` (`https://<équipe>.cloudflareaccess.com`) et
+   `ACCESS_AUD` (*Application Audience Tag*) dans `wrangler.toml`.
+5. `npm run deploy`
 
-Choisissez **une** des méthodes ci‑dessous.
-
-### Méthode 1 — Python (recommandée, rien à installer sur Mac)
-
-#### macOS
-
-1. Ouvrir l'app **Terminal** (⌘+Espace, taper « Terminal », Entrée).
-2. Se placer dans le dossier du projet — taper `cd ` (avec l'espace) puis
-   **glisser‑déposer le dossier** `billing_tool` dans la fenêtre du Terminal, et
-   Entrée. Exemple :
-   ```bash
-   cd ~/Downloads/billing_tool
-   ```
-3. Lancer le serveur :
-   ```bash
-   python3 -m http.server 4173
-   ```
-   > Si macOS propose d'installer les « outils de développement en ligne de
-   > commande », accepter (une fois), puis relancer la commande.
-4. Laisser cette fenêtre ouverte. Ouvrir le navigateur sur :
-   **http://localhost:4173**
-5. Pour arrêter : revenir au Terminal et faire **Ctrl + C**.
-
-#### Windows
-
-1. Installer Python si besoin :
-   - **Microsoft Store** → rechercher **Python 3** → *Obtenir* ; **ou**
-   - <https://www.python.org/downloads/> → cocher **« Add python.exe to PATH »**
-     pendant l'installation.
-2. Ouvrir **PowerShell** (menu Démarrer → taper « PowerShell »).
-3. Se placer dans le dossier :
-   ```powershell
-   cd $HOME\Downloads\billing_tool
-   ```
-4. Lancer le serveur :
-   ```powershell
-   py -m http.server 4173
-   ```
-   > Si `py` n'est pas reconnu, essayer `python -m http.server 4173`.
-   > Autoriser l'accès si le pare‑feu Windows le demande.
-5. Ouvrir le navigateur sur **http://localhost:4173**
-6. Pour arrêter : **Ctrl + C** dans PowerShell.
-
-### Méthode 2 — Node.js
-
-Valable sur Mac et Windows, si Node.js est installé (<https://nodejs.org>).
-
-```bash
-cd billing_tool
-npx serve . -l 4173
-```
-
-Puis ouvrir l'adresse affichée (par ex. `http://localhost:4173`).
-
-### Méthode 3 — Visual Studio Code (interface graphique)
-
-1. Installer **VS Code** : <https://code.visualstudio.com>
-2. Dans VS Code : onglet **Extensions** → installer **Live Server**
-   (éditeur : Ritwick Dey).
-3. **Fichier → Ouvrir le dossier…** → choisir `billing_tool`.
-4. Clic droit sur `index.html` → **Open with Live Server**.
-   Le navigateur s'ouvre automatiquement.
-
----
-
-## 3. Première utilisation
-
-1. Cliquer sur **Paramètres** (en haut à droite) et régler :
-   - le **préfixe de numérotation** (ex. `WAK`, `ACME`, vos initiales…) ;
-   - le **prochain numéro de séquence** (ex. `1`).
-2. Choisir le **logo** (facultatif) — il est mémorisé pour les prochaines fois.
-3. Renseigner l'**entreprise qui facture**, puis cliquer **Enregistrer** :
-   elle apparaîtra ensuite dans la liste déroulante.
-4. Idem pour l'**entreprise à facturer**.
-5. Ajouter les **lignes** de la facture.
-6. **Prévisualiser** pour vérifier, puis **Générer** pour télécharger le PDF.
-
-Les données saisies (entreprises, logo, réglages) restent sur votre poste, dans
-le navigateur utilisé.
-
----
-
-## 4. Dépannage
-
-| Problème | Solution |
-|---|---|
-| `python3: command not found` (Mac) | Accepter l'installation des *Command Line Tools* proposée, ou installer Python via <https://www.python.org/downloads/>. |
-| `py`/`python` non reconnu (Windows) | Réinstaller Python en cochant **« Add to PATH »**, rouvrir PowerShell. |
-| La page reste blanche | Vérifier que l'adresse est bien `http://localhost:4173` et que la fenêtre du serveur est toujours ouverte. |
-| Port déjà utilisé | Remplacer `4173` par un autre nombre (ex. `8080`) dans la commande **et** dans l'URL. |
-| Le PDF ne se télécharge pas (2ᵉ fois) | Cliquer **Autoriser** sur la demande « télécharger plusieurs fichiers », ou utiliser le lien de secours affiché sous le formulaire. |
-| Le logo ne s'affiche pas dans le PDF | Réessayer avec un PNG ou un JPG ; les très grands fichiers sont réduits automatiquement. |
-| Rien ne se sauvegarde | Le navigateur est peut‑être en navigation privée, ou le `localStorage` est bloqué pour le site. |
-
----
-
-## 5. Mettre à jour
-
-Retélécharger le ZIP (ou `git pull`) et remplacer les fichiers. Les données
-étant dans le navigateur, elles ne sont pas affectées par la mise à jour.
+Sans `ACCESS_TEAM_DOMAIN` et `ACCESS_AUD`, l'API en ligne refuse toutes les
+requêtes.

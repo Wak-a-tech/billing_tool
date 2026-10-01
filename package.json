@@ -1,0 +1,11 @@
+{
+  "name": "wak-factures",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler d1 migrations apply wak-factures --local && wrangler pages dev --port 8788",
+    "deploy": "wrangler d1 migrations apply wak-factures --remote && wrangler pages deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}
