@@ -107,12 +107,14 @@ npx wrangler d1 export wak-factures --remote --output sauvegarde.sql
 1. `npx wrangler d1 create wak-factures`, puis reporter l'identifiant dans
    `wrangler.toml`.
 2. `npx wrangler pages project create wak-factures --production-branch main`
-3. Zero Trust → Access → Applications → *Self‑hosted* sur
+3. Zero Trust → Integrations → Identity providers → ajouter **One‑time PIN**
+   (sans lui, seuls les membres du compte Cloudflare peuvent se connecter).
+4. Zero Trust → Access controls → Applications → *Self‑hosted* sur
    `wak-factures.pages.dev` et `*.wak-factures.pages.dev`. Policy *Allow*
-   avec les emails autorisés, connexion *One‑time PIN*.
-4. Reporter `ACCESS_TEAM_DOMAIN` (`https://<équipe>.cloudflareaccess.com`) et
+   avec les emails autorisés, session d'un mois.
+5. Reporter `ACCESS_TEAM_DOMAIN` (`https://<équipe>.cloudflareaccess.com`) et
    `ACCESS_AUD` (*Application Audience Tag*) dans `wrangler.toml`.
-5. `npm run deploy`
+6. `npm run deploy`
 
 Sans `ACCESS_TEAM_DOMAIN` et `ACCESS_AUD`, l'API en ligne refuse toutes les
 requêtes.
